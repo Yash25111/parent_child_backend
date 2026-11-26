@@ -1,6 +1,9 @@
 const crypto = require("crypto");
 const { db } = require("../config/firebase");
-const { sendLocationRequest } = require("../services/notification.service");
+const {
+  sendLocationRequest,
+  sendLocationUploadedNotification
+} = require("../services/notification.service");
 
 async function hasActiveLink(parentUid, childUid) {
   const snap = await db.collection("familyLinks")
@@ -216,6 +219,26 @@ async function uploadLocation(req, res, next) {
     });
     batch.update(requestRef, { status: "completed", completedAt: capturedAt });
     await batch.commit();
+
+    // Notify the requesting parent directly via FCM so they can open Google Maps immediately.
+    try {
+      const childDoc = await db.collection("users").doc(req.user.uid).get();
+      const childName = childDoc.exists
+        ? (childDoc.get("displayName") || childDoc.get("email") || "Your child")
+        : "Your child";
+      await sendLocationUploadedNotification({
+        parentUid: requestDoc.get("parentUid"),
+        childUid: req.user.uid,
+        childName,
+        requestId,
+        latitude,
+        longitude,
+        accuracy: accuracy ?? null,
+        capturedAt
+      });
+    } catch (notifyErr) {
+      console.error("Failed to notify parent after location upload:", notifyErr);
+    }
 
     res.status(200).json({ message: "Location received." });
   } catch (error) { next(error); }
